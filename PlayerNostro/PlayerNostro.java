@@ -1,94 +1,234 @@
-package mnkgame.playerNostro;
+package mnkgame.PlayerNostro;
 
-import mnkgame.MNKBoard;
 import mnkgame.MNKGameState;
 import mnkgame.MNKCell;
 import mnkgame.MNKCellState;
 import mnkgame.MNKPlayer;
 
-import java.util.Random;
+import java.util.LinkedList;
 import java.lang.Integer;
-import java.math.*;
-
-
-
 
 
 public class PlayerNostro implements MNKPlayer{
 
-    private BooleanBoard Board;
-    private boolean first;
-    private int timeOut;
-    private MNKGameState mywin;
-    private MNKGameState yourwin;
-    private Random rand;
-    private MNKCellState myCell;
-    private MNKCellState yourCell;
-    protected MNKCell combinazioni[]=new MNKCell[12];
-    static final double ALP = 1;
+    private BooleanBoard Board; //board contenente stati delle celle e variabili ausiliarie
+    private int timeOut;    //timeout in secondi
+    private double percTime;
+    private MNKCellState myCell;    //CellState assegnato (x/O)
+    private long start; //segna il momento di inizio del timer
+    private boolean is_late;    //Variabile di controllo per il tempo
+    private AVLtree AVLtree;    //Albero bilanciato per ordinamento mosse
 
-    private int numeroTOTcell;
+    public PlayerNostro(){};
 
-    public PlayerNostro(){
-
-    };
-
+    /*
+        Inizializzazione del giocatore
+        O(M*N) 
+    */
     public void initPlayer(int M, int N, int K, boolean first, int timeout_in_secs){
         Board = new BooleanBoard(M, N, K);
-        this.first = first;
         timeOut = timeout_in_secs;
-        mywin = first ? MNKGameState.WINP1 : MNKGameState.WINP2;
-        yourwin = first ? MNKGameState.WINP2 : MNKGameState.WINP1;
+        percTime = 90.0 - (M*N / 1000);
         myCell = first ? MNKCellState.P1 : MNKCellState.P2;
-        yourCell = first ? MNKCellState.P2 : MNKCellState.P1;
-        rand    = new Random(System.currentTimeMillis());
-        numeroTOTcell=0;
+        AVLtree = new AVLtree();
     };
 
-    boolean isInBoard(int row, int col){
-        return(row>=0 && row < Board.M && col>=0 && col < Board.N);
-    }
-
-    boolean IsFree(int row, int col){
-        if(isInBoard(row,col)){
-            return (Board.cellState(row, col) == MNKCellState.FREE);
-        } else return false;
-    }
-
+    /*
+        Seleziona e ritorna la mossa migliore
+        O() 
+    */
     public MNKCell selectCell(MNKCell[] FC, MNKCell[] MC){
-            stampacasellevuote();
-           // valutazione();
-            long start = System.currentTimeMillis();
-            if(MC.length > 0){
-                MNKCell n = MC[MC.length - 1];
-                Board.markCell(n.i, n.j);
-            } else {
-                MNKCell n = new MNKCell(Board.M /2, Board.N /2);
-                Board.markCell(n.i, n.j);
-                return n;
+
+        start = System.currentTimeMillis();
+        is_late = false;
+
+        if(MC.length > 0){  //recupera la mossa dell'avversario
+            BooleanCombination n = new BooleanCombination(MC[MC.length - 1].i, MC[MC.length - 1].j);
+            Board.markCell(n.i, n.j);
+            AVLtree.updateTree(Board.addProximity(n.i, n.j, 1),1);
+        } else {    //se ha la prima mossa gioca al centro della board
+            BooleanCombination n = new BooleanCombination(Board.M /2, Board.N /2);
+            Board.markCell(n.i, n.j);
+            AVLtree.updateTree(Board.addProximity(n.i, n.j, 1),1);
+            return n;
+        }
+       
+        LinkedList<BooleanCombination> mosse = AVLtree.PossibleMoves(); //recupera le mosse prioritarie dall'albero
+        BooleanCombination drawCell = mosse.getFirst();
+        BooleanCombination tempCell = drawCell;
+
+        for(int i=0; i<mosse.size(); i++){ //aumenta gradualmente la profondità di ricerca
+            if((System.currentTimeMillis()-start)/1000.0  > ((percTime/100.0) * timeOut)){
+                is_late = true;
+                break;
             }
 
+            tempCell = iterDeep(mosse, i);
 
-            MNKCell drawCell = FC[rand.nextInt(FC.length)];
-            for(int i=0; i<FC.length; i++){
-                if(!enoughTime(start)){
+            if(is_late && i>0){
+                break;
+            }
+            drawCell = tempCell;
+        }
+
+        // marchia la cella, aggiorna albero e TransTable e ritorna la cella
+        Board.markCell(drawCell.i, drawCell.j);
+        AVLtree.updateTree(Board.addProximity(drawCell.i, drawCell.j, 1),1);
+
+        changeTimer();
+
+        return drawCell;
+    }
+
+    /*
+        Esegue una ricerca alphabeta sulle mosse con profondità massima depht
+        O(b^d) con b fattore di diramazione e d altezza dell’albero
+    */
+    private BooleanCombination iterDeep(LinkedList<BooleanCombination> moves, int depht){
+        int a = Integer.MIN_VALUE;
+        int b = Integer.MAX_VALUE;
+        int max = Integer.MIN_VALUE;
+        int eval;
+        BooleanCombination cell=moves.getFirst();
+
+        for(BooleanCombination d : moves){ //visita una per una le mosse della lista
+            if((System.currentTimeMillis()-start)/1000.0  > ((percTime/100.0) * timeOut)){
+                is_late = true;
+                break;
+            }
+            Board.markCell(d.i, d.j);
+            AVLtree.updateTree(Board.addProximity(d.i, d.j, 1),1);
+
+            eval = alphaBetaDepht(AVLtree.PossibleMoves(), false, a, b, depht); //visita in profondità e ritorna una valutazione
+
+            if(eval > max){
+                cell = d;
+                max = eval;
+            }
+
+            Board.unmarkCell();
+            AVLtree.updateTree(Board.addProximity(d.i, d.j, -1), -1);
+
+            if(is_late){
+                break;
+            }
+        }
+
+        return cell;
+    }
+
+    /*
+        Ricerca alphaBetaPruning
+        O()
+    */
+    private int alphaBetaDepht(LinkedList<BooleanCombination> moves, boolean myturn, int a, int b, int depht){
+        int eval;
+
+        //Controllo di interruzione per tempo, GameState finale o profondità richiesta raggiunta
+        if(((System.currentTimeMillis()-start)/1000.0  > ((percTime/100.0) * timeOut)) || (Board.gameState() != MNKGameState.OPEN || depht == 0)){
+            if((System.currentTimeMillis()-start)/1000.0  > ((percTime/100.0) * timeOut)){
+                is_late=true;
+                return Integer.MIN_VALUE;
+            }
+
+            eval = evaluateProMax();
+            
+        //altrimenti prosegui nella ricerca
+        } else if(myturn){
+            eval = Integer.MIN_VALUE;
+
+            for (BooleanCombination d : moves){
+                if((System.currentTimeMillis()-start)/1000.0  > ((percTime/100.0) * timeOut)){
+                    is_late=true;
                     break;
                 }
-                drawCell = iterDeep(FC, i);
-            }
+                Board.markCell(d.i, d.j);
+                AVLtree.updateTree(Board.addProximity(d.i, d.j, 1), 1);
 
-            Board.markCell(drawCell.i, drawCell.j);
-            return drawCell;
+                eval = Math.max(eval, alphaBetaDepht(AVLtree.PossibleMoves(), !myturn, a, b, depht - 1));
+                
+                Board.unmarkCell();
+                AVLtree.updateTree(Board.addProximity(d.i, d.j, -1), -1);
+
+                a = Math.max(eval, a);
+                if(b <= a){ //CutOff
+                    break;
+                }
+            }
+        } else {
+            eval = Integer.MAX_VALUE;
+            for(BooleanCombination d : moves){
+                if((System.currentTimeMillis()-start)/1000.0  > ((percTime/100.0) * timeOut)){
+                    is_late=true;
+                    break;
+                }
+                Board.markCell(d.i, d.j);
+                AVLtree.updateTree(Board.addProximity(d.i, d.j, 1), 1);
+
+                eval = Math.min(eval, alphaBetaDepht(AVLtree.PossibleMoves(), !myturn, a, b, depht - 1 ));;
+                
+                Board.unmarkCell();
+                AVLtree.updateTree(Board.addProximity(d.i, d.j, -1), -1);
+
+                b = Math.min(eval, b);
+                if(b <= a){ //CutOff
+                    break;
+                }
+            }
+        }
+        if(is_late){
+            return Integer.MIN_VALUE;
+        }
+        return eval;
     }
-    
+
+    /*
+        Valuta la board per entrambi i giocatori e sottrae i punteggi
+        O(M*N*K) 
+    */
+    private int evaluateProMax(){
+        MNKCell[] MC = Board.getMarkedCells();
+        return threats(true, MC) - threats(false, MC);
+    }
+
+    /*
+        Valuta la board per il giocatore p e ritorna il valore
+        O(M*N*K) 
+    */
+    protected int threats(boolean p, MNKCell[] MC){
+        int tot=0;
+        if(p){
+            for(int i = 1; i < Board.K-2; i++){
+                
+                tot += (i*2 - 1) * getThreat(i, 1, p, MC) + (i*2) * getThreat(i, 2, p, MC);
+            }
+            tot += getThreat(Board.K-2, 1, p, MC) + 100 * getThreat(Board.K-2, 2, p, MC) + 80 * getThreat(Board.K-1, 1, p, MC) + 250 * getThreat(Board.K-1, 2, p, MC) +
+                    1000000 * getThreat(Board.K, 3, p, MC);
+        } else{
+            for(int i = 1; i < Board.K-2; i++){
+                tot += (i*2 - 1) * getThreat(i, 1, p, MC) + (i*2) * getThreat(i, 2, p, MC);
+            }
+            tot += getThreat(Board.K-2, 1, p, MC) + 1300 * getThreat(Board.K-2, 2, p, MC) + 2000 * getThreat(Board.K-1, 1, p, MC) + 5020 * getThreat(Board.K-1, 2, p, MC) +
+                    1000000 * getThreat(Board.K, 3, p, MC);
+
+        }
+        return tot;
+    }
+
+    /*
+        combo: quanti ne devi mettere in fila
+        type: 1 -> halfopen,  2 -> open, 3 -> vittoria
+        p indica il player: falso -> avversario
+        Ritorna il numero di combinazioni di lunghezza combo e del tipo type
+        O(nk)
+    */
     int getThreat(int combo, int type, boolean p, MNKCell[] MC){
-        //  1 -> halfopen,  2 -> open, 3 -> vittoria
-        //  combo: quanti ne devi mettere in fila
-        // p indica il tipo, X oppure O
+
 
         int totale=0;
         int index=0;
-        if( (p && Board.cellState(MC[0].i, MC[0].j) != myCell) || (!p && Board.cellState(MC[0].i, MC[0].j) == myCell) ){ //true sono le X
+        if( (p && Board.cellState(MC[0].i, MC[0].j) != myCell) || (!p && Board.cellState(MC[0].i, MC[0].j) == myCell) ){ 
+            //osserva la prima mossa della partita, se non è del giocatore che si vuole valutare aumenta index
             index++;
         }
 
@@ -106,6 +246,12 @@ public class PlayerNostro implements MNKPlayer{
 
         return totale;
     }
+
+    /*
+        Le funzioni CheckThreat controllano se è possibile da una cella ottenere una combinazione verticale diagonale o obliqua
+        Si utilizzano le variabili Vertical/Orizontal/Diagonal/Antidiagonal per memorizzare quando una combinazione è già stata controllata
+        O(K) 
+    */
 
     int CheckThreatVertical(MNKCell cell, int sizeThreat, int type){
         int lastCellx1=cell.i;
@@ -313,177 +459,37 @@ public class PlayerNostro implements MNKPlayer{
         }
         return risultato;
     }
-
-    protected int threats(boolean p, MNKCell[] MC){
-        int tot=0;
-        if(p){
-            for(int i = 1; i < Board.K-2; i++){
-                tot += ALP * (i*2 - 1) * getThreat(i, 1, p, MC) + ALP * (i*2) * getThreat(i, 2, p, MC);
-            }
-            tot += ALP * getThreat(Board.K-2, 1, p, MC) + 100 * getThreat(Board.K-2, 2, p, MC) + 80 * getThreat(Board.K-1, 1, p, MC) + 250 * getThreat(Board.K-1, 2, p, MC) +
-                    1000000 * getThreat(Board.K, 3, p, MC);
-        } else{
-            for(int i = 1; i < Board.K-2; i++){
-                tot += ALP * (i*2 - 1) * getThreat(i, 1, p, MC) + ALP * (i*2) * getThreat(i, 2, p, MC);
-            }
-            tot += ALP * getThreat(Board.K-2, 1, p, MC) + 1300 * getThreat(Board.K-2, 2, p, MC) + 2000 * getThreat(Board.K-1, 1, p, MC) + 5020 * getThreat(Board.K-1, 2, p, MC) +
-                    1000000 * getThreat(Board.K, 3, p, MC);
-
-        }
-        return tot;
+    
+    /*
+        Ritorna true se la cella è all'interno della board
+        O(1) 
+    */
+    boolean isInBoard(int row, int col){
+        return(row>=0 && row < Board.M && col>=0 && col < Board.N);
     }
 
-
-    private int evaluateProMax(){
-
-        MNKCell[] MC = Board.getMarkedCells();
-        return threats(true, MC) - threats(false, MC);
+    /*
+        Restituisce true se la cella è libera e dentro la board 
+        O(1)
+    */
+    boolean IsFree(int row, int col){
+        if(isInBoard(row,col)){
+            return (Board.cellState(row, col) == MNKCellState.FREE);
+        } else return false;
     }
 
-    // Valuta soltanto vittoria/sconfitta/pareggio nei gamestate finali (1/0/-1)
-    private int evaluate(){
-        int eval;
-        mnkgame.MNKGameState end = Board.gameState();
-        if(end == MNKGameState.DRAW){
-            eval = 0;
-        } else if(end == mywin){
-            eval = 1;
-        } else eval = -1;
-
-        return eval;
-    }
-
-    // Algoritmo alphaBeta con profondità limite
-
-    private int alphaBetaDepht(MNKCell[] FC, boolean myturn, int a, int b, int depht){
-        int eval;
-        if(Board.gameState() != MNKGameState.OPEN || depht == 0){
-            eval = evaluateProMax();
-          //  StampGame(Board.getMarkedCells(), Board);
-            // System.out.print( eval + "\n");
-        } else if(myturn){
-            eval = Integer.MIN_VALUE;
-            for (MNKCell d : FC){
-                Board.markCell(d.i, d.j);
-                eval = Math.max(eval, alphaBetaDepht(Board.getFreeCells(), !myturn, a, b, depht - 1));
-                Board.unmarkCell();
-                a = Math.max(eval, a);
-                if(b <= a){
-                    break;
-                }
-            }
-        } else {
-            eval = Integer.MAX_VALUE;
-            for(MNKCell d : FC){
-                Board.markCell(d.i, d.j);
-                eval = Math.min(eval, alphaBetaDepht(Board.getFreeCells(), !myturn, a, b, depht - 1 ));
-                Board.unmarkCell();
-                b = Math.min(eval, b);
-                if(b <= a){
-                    break;
-                }
-            }
-        }
-        return eval;
-    }
-
-    private MNKCell iterDeep(MNKCell[] FC, int depht){
-        int a = Integer.MIN_VALUE;
-        int b = Integer.MAX_VALUE;
-        int max = Integer.MIN_VALUE;
-        int eval;
-        MNKCell cell = FC[rand.nextInt(FC.length)];
-        for(MNKCell d : FC){
-            Board.markCell(d.i, d.j);
-            eval = alphaBetaDepht(Board.getFreeCells(), false, a, b, 3);
-            if(eval > max){
-                cell = d;
-                max = eval;
-            }
-            Board.unmarkCell();
-        }
-        return cell;
-    }
-
-    private boolean enoughTime(long st){
-        // tempo usato in secondi > 99% del timeout
-        //     if(System.currentTimeMillis()-st/1000.0 > timeOut*(90.0/100.0)){
-        return true;
-        //     } else return false;
-    }
-
-    public void stampacasellevuote(){
-        MNKCell celle[] =Board.getFreeCells();
-        for(MNKCell d: celle){
-            if(numeroTOTcell>Board.M*Board.N){
-                break;    
-            }
-            numeroTOTcell=numeroTOTcell+1;            
-            System.out.println("cella numero: " + numeroTOTcell + " coordinate x: "+ d.i + " coordinate y: " + d.j + "\n");
+    private void changeTimer(){
+        double tempTime = timeOut - (System.currentTimeMillis()-start)/1000.0;
+        if(tempTime <= 0.3){
+            percTime -= 3;
+        } else if(tempTime >=0.6 && percTime < 97){
+            percTime += 3;
         }
     }
-
-    public void valutazione(){
-
-        //per la configurazione 4 3 3
-        combinazioni[0] = new MNKCell(0,0, MNKCellState.P1);
-        Board.markCell(0,0);
-        combinazioni[1] = new MNKCell(1,0, MNKCellState.P2);
-        Board.markCell(1,0);
-        combinazioni[2] = new MNKCell(2,0, MNKCellState.P1);
-        Board.markCell(2,0);
-        combinazioni[3] = new MNKCell(3,0, MNKCellState.P2);
-        Board.markCell(3,0);
-        combinazioni[4] = new MNKCell(0,1, MNKCellState.P1);
-        Board.markCell(0,1);
-        combinazioni[5] = new MNKCell(0,2, MNKCellState.P2);
-        Board.markCell(0,2);
-        combinazioni[6] = new MNKCell(1,1, MNKCellState.P1);
-        Board.markCell(1,1);
-        combinazioni[7] = new MNKCell(1,2, MNKCellState.P2);
-        Board.markCell(1,2);
-
-        combinazioni[8] = new MNKCell(2,1, MNKCellState.FREE);
-        combinazioni[9] = new MNKCell(2,2, MNKCellState.FREE);
-        combinazioni[10] = new MNKCell(3,1, MNKCellState.FREE);
-        combinazioni[11] = new MNKCell(3,2, MNKCellState.FREE);
-
-        System.out.print( "valutazione della configuarzione:\n"  );
-        StampGame(combinazioni, Board);
-        System.out.println("\n" + (threats(true, combinazioni) - threats(false, combinazioni) ));
-
-    }
-
-    public void StampGame(MNKCell[] MC, MNKBoard B) {
-        MNKCell c1, c2;
-        boolean found = false;
-        for (int i = 0; i < B.M; i++) {
-            for (int j = 0; j < B.N; j++) {
-                c1 = new MNKCell(i, j, MNKCellState.P1);
-                c2 = new MNKCell(i, j, MNKCellState.P2);
-                for (MNKCell M : MC) {
-                    if (M.i == c1.i && M.j == c1.j && M.state == c1.state) {
-                        System.out.print("X ");
-                        found = true;
-                        break;
-                    } else if (M.i == c1.i && M.j == c1.j && M.state == c2.state) {
-                        System.out.print("O ");
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found) {
-                    System.out.print("_ ");
-                }
-                found = false;
-            }
-            System.out.print("\n");
-        }
-        System.out.println("------");
-    }
-
+    
     public String playerName(){
-        return "sus";
+        return "Corrado il Conquistatore";
     }
+
 }
 
