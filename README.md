@@ -1,2 +1,0 @@
-# AlgoProject
-Progetto di algoritmi 
